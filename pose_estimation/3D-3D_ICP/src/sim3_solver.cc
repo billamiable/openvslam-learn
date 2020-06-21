@@ -1,9 +1,7 @@
 #include "sim3_solver.h"
 #include "random_array.h"
-#include <vector>
-#include <cmath>
 
-#include <opencv2/core/core.hpp>
+#include <cmath>
 
 using namespace std;
 

@@ -1,4 +1,4 @@
-#include "sim3_solver.h"
+#include "pnp_solver.h"
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
@@ -15,6 +15,8 @@ void find_feature_matches (
 // 像素坐标转相机归一化坐标
 Point2d pixel2cam ( const Point2d& p, const Mat& K );
 
+Vec2_t cam2pixel ( const Vec3_t& p, const Mat& K );
+
 int main ( int argc, char** argv )
 {
     if ( argc != 5 )
@@ -25,7 +27,6 @@ int main ( int argc, char** argv )
     
 
     //-- 读取图像
-    // TO-DO: 之后试下不同scale的图，测试下Sim3的效果
     Mat img_1 = imread ( argv[1], CV_LOAD_IMAGE_COLOR );
     Mat img_2 = imread ( argv[2], CV_LOAD_IMAGE_COLOR );
     int width = img_1.cols;
@@ -33,9 +34,7 @@ int main ( int argc, char** argv )
 
     vector<KeyPoint> keypoints_1, keypoints_2;
     vector<DMatch> matches;
-    // 这部分没法省略，因为需要找到correspondence
     find_feature_matches ( img_1, img_2, keypoints_1, keypoints_2, matches );
-    // 这里有81个匹配对，后面inlier有60个，是说的同一个
     cout<<"一共找到了"<<matches.size() <<"组匹配点"<<endl;
 
     // 建立3D点
@@ -53,8 +52,7 @@ int main ( int argc, char** argv )
         ushort d2 = depth2.ptr<unsigned short> ( int ( keypoints_2[m.trainIdx].pt.y ) ) [ int ( keypoints_2[m.trainIdx].pt.x ) ];
         if ( d1==0 || d2==0 )   // bad depth
             continue;
-        // 得到3D点，这里已经有2D点了
-        // TO-DO: 看下怎么简化代码？
+        // 保存2D点
         all_pts_2d_1.emplace_back ( Vec2_t ( double(keypoints_1[m.queryIdx].pt.x), double(keypoints_1[m.queryIdx].pt.y) ) );
         all_pts_2d_2.emplace_back ( Vec2_t ( double(keypoints_2[m.trainIdx].pt.x), double(keypoints_2[m.trainIdx].pt.y) ) );
         // pixel2cam: 2d->2d，相当于乘了K^-1
@@ -63,39 +61,67 @@ int main ( int argc, char** argv )
         Point2d p2 = pixel2cam ( keypoints_2[m.trainIdx].pt, K );
         float dd1 = float ( d1 ) /5000.0;
         float dd2 = float ( d2 ) /5000.0;
+        // 保存3D点
         all_pts_3d_1.emplace_back ( Vec3_t ( double(p1.x*dd1), double(p1.y*dd1), double(dd1) ) );
         all_pts_3d_2.emplace_back ( Vec3_t ( double(p2.x*dd2), double(p2.y*dd2), double(dd2) ) );
     }
     // cout << "first " << all_pts_2d_2.at(0)<<endl;
 
-    // 这里获得的Inlier个数就是匹配对的子集
-    // 总共81组，一般可以到60组内点，还是不错的！
-    sim3_solver solver(all_pts_2d_1, all_pts_2d_2, all_pts_3d_1, all_pts_3d_2, K, width, height, true, 20);
-    solver.find_via_ransac(200);
-    Vec3_t t = solver.get_best_translation_12();
-    Mat33_t R = solver.get_best_rotation_12();
-    float s = solver.get_best_scale_12();
-    cout<<"end of ICP estimation: "<<solver.solution_is_valid()<<endl;
-    cout<<"end of ICP rotation: "<<R<<endl;
-    cout<<"end of ICP translation: "<<t<<endl;
-    cout<<"end of ICP scale: "<<s<<endl;
+    // convert 2d keypoints to bearings
+    std::vector<Vec3_t, Eigen::aligned_allocator<Vec3_t>> bearing_pts_2d_2;
+    bearing_pts_2d_2.resize(all_pts_2d_2.size());
+    double cx = K.at<double> ( 0,2 );
+    double cy = K.at<double> ( 1,2 );
+    double fx = K.at<double> ( 0,0 );
+    double fy = K.at<double> ( 1,1 );
+    for (unsigned long idx = 0; idx < all_pts_2d_2.size(); ++idx) {
+        const auto x_normalized = (all_pts_2d_2[idx](0) - cx) / fx;
+        const auto y_normalized = (all_pts_2d_2[idx](1) - cy) / fy;
+        const auto l2_norm = std::sqrt(x_normalized * x_normalized + y_normalized * y_normalized + 1.0);
+        bearing_pts_2d_2.at(idx) = Vec3_t{x_normalized / l2_norm, y_normalized / l2_norm, 1.0 / l2_norm};
+    }
+
+    // TO-DO: 这里原版用了resample_by_indices，需要看下是否需要，我可以先来个最简单的
+    // 与sim3_solver是类对象不同，pnp_solver是指针
+    // TO-DO: 下面的需要修改下，变成3D-2D匹配对
+    // TO-DO: 研究下valid_indices等输入变量，其他应该就没问题了。
+    auto solver = new pnp_solver(all_pts_3d_1, bearing_pts_2d_2);
+    // auto pnp_solver = setup_pnp_solver(valid_indices, curr_frm.bearings_, curr_frm.keypts_, matched_landmarks.at(i), curr_frm.scale_factors_);
+    solver->find_via_ransac(30);
+    cout<<"end of PNP estimation: "<<solver->solution_is_valid()<<endl;
+    Vec3_t t = solver->get_best_translation();
+    Mat33_t R = solver->get_best_rotation();
+    Mat44_t cam_pose = solver->get_best_cam_pose();
+    cout<<"end of PNP rotation: "<<R<<endl;
+    cout<<"end of PNP translation: "<<t<<endl;
+    cout<<"end of PNP pose: "<<cam_pose<<endl;
 
     double avg_err;
     double error = 0;
-    // 2->1
+    // X_c = R_cw * X_w + t_cw, world->camera
     for ( int i=0; i<all_pts_3d_1.size(); i++ )
     {
-        Vec3_t p2_1 = R * all_pts_3d_2[i] + t;
+        Vec3_t p_3d_w2c = R * all_pts_3d_1[i] + t;
+        Vec2_t p_2d_w2c = cam2pixel(p_3d_w2c, K);
         // calculate error
-        double e = abs(p2_1(0) - all_pts_3d_1[i](0)) + 
-                   abs(p2_1(1) - all_pts_3d_1[i](1)) +
-                   abs(p2_1(2) - all_pts_3d_1[i](2));
+        double e = abs(p_2d_w2c(0) - all_pts_2d_2[i](0)) + 
+                   abs(p_2d_w2c(1) - all_pts_2d_2[i](1));
         error += e;
     }
     avg_err = error / all_pts_3d_1.size();
     cout<<"average error is "<<avg_err<<endl;
 
 }
+
+Vec2_t cam2pixel ( const Vec3_t& p, const Mat& K )
+{
+    return Vec2_t
+           (
+               p(0) * K.at<double> ( 0,0 ) / p(2) + K.at<double> ( 0,2 ),
+               p(1) * K.at<double> ( 0,0 ) / p(2) + K.at<double> ( 1,2 )
+           );
+}
+
 
 void find_feature_matches ( const Mat& img_1, const Mat& img_2,
                             std::vector<KeyPoint>& keypoints_1,
