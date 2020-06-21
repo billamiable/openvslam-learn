@@ -1,3 +1,3 @@
-# ICP求解
+# PNP求解
 
-将OpenVSLAM中的Sim3_solver部分单独拎出来，加上slambook中的特征提取代码，组成了一个单独的ICP求解模块。ICP求解的方法为基于RANSAC的四元数法，与OpenVSLAM中的一致。
+将OpenVSLAM中的pnp_solver部分单独拎出来，加上slambook中的特征提取代码，组成了一个单独的PNP求解模块。PNP求解的方法为基于RANSAC的EPNP法，与OpenVSLAM中的一致。
