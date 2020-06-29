@@ -1,4 +1,4 @@
-#include "pnp_solver.h"
+#include "triangulator.h"
 #include <opencv2/features2d/features2d.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/calib3d/calib3d.hpp>
@@ -65,48 +65,63 @@ int main ( int argc, char** argv )
         all_pts_3d_1.emplace_back ( Vec3_t ( double(p1.x*dd1), double(p1.y*dd1), double(dd1) ) );
         all_pts_3d_2.emplace_back ( Vec3_t ( double(p2.x*dd2), double(p2.y*dd2), double(dd2) ) );
     }
-    // cout << "first " << all_pts_2d_2.at(0)<<endl;
 
     // convert 2d keypoints to bearings
-    std::vector<Vec3_t, Eigen::aligned_allocator<Vec3_t>> bearing_pts_2d_2;
+    std::vector<Vec3_t, Eigen::aligned_allocator<Vec3_t>> bearing_pts_2d_1, bearing_pts_2d_2;
+    bearing_pts_2d_1.resize(all_pts_2d_1.size());
     bearing_pts_2d_2.resize(all_pts_2d_2.size());
     double cx = K.at<double> ( 0,2 );
     double cy = K.at<double> ( 1,2 );
     double fx = K.at<double> ( 0,0 );
     double fy = K.at<double> ( 1,1 );
-    for (unsigned long idx = 0; idx < all_pts_2d_2.size(); ++idx) {
-        const auto x_normalized = (all_pts_2d_2[idx](0) - cx) / fx;
-        const auto y_normalized = (all_pts_2d_2[idx](1) - cy) / fy;
-        const auto l2_norm = std::sqrt(x_normalized * x_normalized + y_normalized * y_normalized + 1.0);
-        bearing_pts_2d_2.at(idx) = Vec3_t{x_normalized / l2_norm, y_normalized / l2_norm, 1.0 / l2_norm};
+    for (unsigned long idx = 0; idx < all_pts_2d_1.size(); ++idx) {
+        const auto x_norm_1 = (all_pts_2d_1[idx](0) - cx) / fx;
+        const auto y_norm_1 = (all_pts_2d_1[idx](1) - cy) / fy;
+        const auto l2_norm_1 = std::sqrt(x_norm_1 * x_norm_1 + y_norm_1 * y_norm_1 + 1.0);
+        bearing_pts_2d_1.at(idx) = Vec3_t{x_norm_1 / l2_norm_1, y_norm_1 / l2_norm_1, 1.0 / l2_norm_1};
+        const auto x_norm_2 = (all_pts_2d_2[idx](0) - cx) / fx;
+        const auto y_norm_2 = (all_pts_2d_2[idx](1) - cy) / fy;
+        const auto l2_norm_2 = std::sqrt(x_norm_2 * x_norm_2 + y_norm_2 * y_norm_2 + 1.0);
+        bearing_pts_2d_2.at(idx) = Vec3_t{x_norm_2 / l2_norm_2, y_norm_2 / l2_norm_2, 1.0 / l2_norm_2};
     }
 
-    // TO-DO: 这里原版用了resample_by_indices，需要看下是否需要，我可以先来个最简单的
-    // 与sim3_solver是类对象不同，pnp_solver是指针
-    auto solver = new pnp_solver(all_pts_3d_1, bearing_pts_2d_2);
-    solver->find_via_ransac(30);
-    cout<<"end of PNP estimation: "<<solver->solution_is_valid()<<endl;
-    Vec3_t t = solver->get_best_translation();
-    Mat33_t R = solver->get_best_rotation();
-    Mat44_t cam_pose = solver->get_best_cam_pose();
-    cout<<"end of PNP rotation: "<<R<<endl;
-    cout<<"end of PNP translation: "<<t<<endl;
-    cout<<"end of PNP pose: "<<cam_pose<<endl;
 
-    double avg_err;
-    double error = 0;
-    // X_c = R_cw * X_w + t_cw, world->camera
-    for ( int i=0; i<all_pts_3d_1.size(); i++ )
-    {
-        Vec3_t p_3d_w2c = R * all_pts_3d_1[i] + t;
-        Vec2_t p_2d_w2c = cam2pixel(p_3d_w2c, K);
-        // calculate error
-        double e = abs(p_2d_w2c(0) - all_pts_2d_2[i](0)) + 
-                   abs(p_2d_w2c(1) - all_pts_2d_2[i](1));
-        error += e;
-    }
-    avg_err = error / all_pts_3d_1.size();
-    cout<<"average error is "<<avg_err<<endl;
+    // use R,t obtained from other algorithms lke ICP/PnP 
+    Mat33_t R_21;
+    R_21 << 0.997828, 0.0490932, -0.0439111, -0.050432, 0.998279, -0.029919, 0.0423667, 0.0320686, 0.998587;
+    Vec3_t t_21(0.135282, 0.0113925, -0.0597764);
+    Mat33_t K_;
+    K_ << 520.9, 0, 325.1, 0, 521.0, 249.7, 0, 0, 1;
+
+    int id = 1;
+
+    // triangulation
+    Vec3_t pos_w_1, pos_w_2, pos_w_3;
+    // case 1: 已知pixel coordinate + 两个view各自的投影矩阵，其中P=K*[R t]
+    Mat34_t rt_1, rt_2;
+    rt_1.block<3, 3>(0, 0) = Mat33_t::Identity();;
+    rt_1.block<3, 1>(0, 3) = Vec3_t(0, 0, 0);
+    rt_2.block<3, 3>(0, 0) = R_21;
+    rt_2.block<3, 1>(0, 3) = t_21;
+    Mat34_t proj_matrix_1 = K_ * rt_1;
+    Mat34_t proj_matrix_2 = K_ * rt_2;
+    Point2d pt_2d_1(all_pts_2d_1[id](0), all_pts_2d_1[id](1));
+    Point2d pt_2d_2(all_pts_2d_2[id](0), all_pts_2d_2[id](1));
+    pos_w_1 = triangulator::triangulate(pt_2d_1, pt_2d_2, proj_matrix_1, proj_matrix_2);
+    
+    // case 2: 已知bearing + R,t，最常见的情况
+    pos_w_2 = triangulator::triangulate(bearing_pts_2d_1[id], bearing_pts_2d_2[id], R_21, t_21);
+
+    // case 3: 已知bearing + 两个view各自相对于世界坐标系的pose
+    Mat44_t cam_pose_1w = Mat44_t::Identity();
+    Mat44_t cam_pose_2w = Mat44_t::Identity();
+    cam_pose_2w.block<3, 3>(0, 0) = R_21;
+    cam_pose_2w.block<3, 1>(0, 3) = t_21;
+    pos_w_3 = triangulator::triangulate(bearing_pts_2d_1[id], bearing_pts_2d_2[id], cam_pose_1w, cam_pose_2w);
+
+    cout<<"end of triangulation estimation: "<<pos_w_1<<endl;
+    cout<<"end of triangulation estimation: "<<pos_w_2<<endl; // 2.596557*
+    cout<<"end of triangulation estimation: "<<pos_w_3<<endl;
 
 }
 
