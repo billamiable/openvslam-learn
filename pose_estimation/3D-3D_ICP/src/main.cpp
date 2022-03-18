@@ -26,8 +26,8 @@ int main ( int argc, char** argv )
 
     //-- 读取图像
     // TO-DO: 之后试下不同scale的图，测试下Sim3的效果
-    Mat img_1 = imread ( argv[1], CV_LOAD_IMAGE_COLOR );
-    Mat img_2 = imread ( argv[2], CV_LOAD_IMAGE_COLOR );
+    Mat img_1 = imread ( argv[1], 1 );
+    Mat img_2 = imread ( argv[2], 1 );
     int width = img_1.cols;
     int height = img_1.rows;
 
@@ -39,8 +39,8 @@ int main ( int argc, char** argv )
     cout<<"一共找到了"<<matches.size() <<"组匹配点"<<endl;
 
     // 建立3D点
-    Mat depth1 = imread ( argv[3], CV_LOAD_IMAGE_UNCHANGED );       // 深度图为16位无符号数，单通道图像
-    Mat depth2 = imread ( argv[4], CV_LOAD_IMAGE_UNCHANGED );       // 深度图为16位无符号数，单通道图像
+    Mat depth1 = imread ( argv[3], -1 );       // 深度图为16位无符号数，单通道图像
+    Mat depth2 = imread ( argv[4], -1 );       // 深度图为16位无符号数，单通道图像
     // fx, cx, fy, cy
     Mat K = ( Mat_<double> ( 3,3 ) << 520.9, 0, 325.1, 0, 521.0, 249.7, 0, 0, 1 );
     

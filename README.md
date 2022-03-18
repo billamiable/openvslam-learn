@@ -7,3 +7,12 @@
 # How to build
 
 sudo apt install libeigen3-dev libopencv-dev libyaml-cpp-dev
+
+mkdir build
+cd build
+cmake ..
+make -j
+
+# How to run
+
+./pnp_solver ../data/1.png ../data/2.png ../data/1_depth.png ../data/2_depth.png
