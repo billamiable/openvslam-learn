@@ -84,7 +84,7 @@ Vec3_t triangulator::triangulate(const cv::Point2d& pt_1, const cv::Point2d& pt_
     return v.block<3, 1>(0, 0) / v(3); // 齐次坐标转为非齐次坐标
 }
 
-// bearing的定义为[x-cx/fx, y-cy/fy, 1]/sqrt(x^2+y^2)
+// bearing的定义为[x-cx/fx, y-cy/fy, 1]/sqrt(1+(x-cx/fx)^2+(y-cy/fy)^2)
 // 即为像素点的归一化平面坐标再做一次数值归一化
 // TO-DO: 这里的结果非常不稳定，和case 1,3的差别很大，研究下原理和解决方案
 Vec3_t triangulator::triangulate(const Vec3_t& bearing_1, const Vec3_t& bearing_2, const Mat33_t& rot_21, const Vec3_t& trans_21) {

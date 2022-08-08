@@ -6,7 +6,7 @@
 
 // 求解的是X_c = R_cw * X_w + t_cw
 // 通过引入bearing，实现单目，双目，rgbd，全景图的兼容
-// valid_bearing：对于perspective相机模型，间接表示2D点[x-cx/fx, y-cy/fy, 1]/sqrt(x^2+y^2)
+// valid_bearing：对于perspective相机模型，间接表示2D点[x-cx/fx, y-cy/fy, 1]/sqrt(1+(x-cx/fx)^2+(y-cy/fy)^2)
 // landmark是路标点（3D），keypts是特征点（2D），后两者组成3D-2D匹配对
 // TO-DO: 使用时须确定3D-2D匹配对是否有效
 pnp_solver::pnp_solver(const std::vector<Vec3_t, Eigen::aligned_allocator<Vec3_t>> pts_3d_w,
